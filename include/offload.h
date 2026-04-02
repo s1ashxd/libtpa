@@ -41,4 +41,7 @@ struct port_block;
 int port_block_offload_create(struct port_block *block);
 void port_block_offload_destroy(struct port_block *block);
 
+int udp_offload_init(uint16_t *ports, int nr_port);
+int udp_offload_init_queue(uint16_t *ports, int nr_port, uint16_t queue);
+
 #endif

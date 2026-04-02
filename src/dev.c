@@ -303,10 +303,12 @@ int dev_port_init(void)
 	uint16_t i;
 	uint64_t txq_size;
 	uint64_t rxq_size;
+	uint32_t nr_queue;
 	struct nic_spec *nic_spec;
 
-	txq_size = tpa_cfg.nr_worker * sizeof(struct dev_txq);
-	rxq_size = tpa_cfg.nr_worker * sizeof(struct dev_rxq);
+	nr_queue = tpa_cfg.nr_worker + tpa_cfg.nr_udp_queue;
+	txq_size = nr_queue * sizeof(struct dev_txq);
+	rxq_size = nr_queue * sizeof(struct dev_rxq);
 
 	for (i = 0; i < dev.nr_port; i++) {
 		dev.ports[i].port_id = i;

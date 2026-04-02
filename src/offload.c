@@ -54,6 +54,9 @@ struct offload_ctx {
 	struct rte_flow_item_tcp tcp_spec;
 	struct rte_flow_item_tcp tcp_mask;
 
+	struct rte_flow_item_udp udp_spec;
+	struct rte_flow_item_udp udp_mask;
+
 	struct rte_flow_action_mark mark;
 	struct rte_flow_action_rss rss;
 	struct rte_flow_action_queue queue;
@@ -72,6 +75,7 @@ struct offload_rule {
 	uint16_t has_src_port:1;
 	uint16_t has_dst_port:1;
 	uint16_t has_dst_port_mask:1;
+	uint16_t is_udp:1;
 
 	uint8_t proto;
 	struct tpa_ip src_ip;
@@ -403,16 +407,30 @@ static void offload_translate(struct offload_rule *rule, struct offload_ctx *ctx
 		}
 	}
 
-	if (rule->has_src_port) {
-		ctx->tcp_spec.hdr.src_port = rule->src_port;
-		ctx->tcp_mask.hdr.src_port = 0xffff;
-	}
-	if (rule->has_dst_port) {
-		ctx->tcp_spec.hdr.dst_port = rule->dst_port;
-		if (rule->has_dst_port_mask)
-			ctx->tcp_mask.hdr.dst_port = rule->dst_port_mask;
-		else
-			ctx->tcp_mask.hdr.dst_port = 0xffff;
+	if (rule->is_udp) {
+		if (rule->has_src_port) {
+			ctx->udp_spec.hdr.src_port = rule->src_port;
+			ctx->udp_mask.hdr.src_port = 0xffff;
+		}
+		if (rule->has_dst_port) {
+			ctx->udp_spec.hdr.dst_port = rule->dst_port;
+			if (rule->has_dst_port_mask)
+				ctx->udp_mask.hdr.dst_port = rule->dst_port_mask;
+			else
+				ctx->udp_mask.hdr.dst_port = 0xffff;
+		}
+	} else {
+		if (rule->has_src_port) {
+			ctx->tcp_spec.hdr.src_port = rule->src_port;
+			ctx->tcp_mask.hdr.src_port = 0xffff;
+		}
+		if (rule->has_dst_port) {
+			ctx->tcp_spec.hdr.dst_port = rule->dst_port;
+			if (rule->has_dst_port_mask)
+				ctx->tcp_mask.hdr.dst_port = rule->dst_port_mask;
+			else
+				ctx->tcp_mask.hdr.dst_port = 0xffff;
+		}
 	}
 
 	add_flow_pattern(&ctx->patterns, RTE_FLOW_ITEM_TYPE_ETH, NULL, NULL);
@@ -420,7 +438,10 @@ static void offload_translate(struct offload_rule *rule, struct offload_ctx *ctx
 		add_flow_pattern(&ctx->patterns, RTE_FLOW_ITEM_TYPE_IPV6, &ctx->ip6_spec, &ctx->ip6_mask);
 	else
 		add_flow_pattern(&ctx->patterns, RTE_FLOW_ITEM_TYPE_IPV4, &ctx->ip_spec, &ctx->ip_mask);
-	add_flow_pattern(&ctx->patterns, RTE_FLOW_ITEM_TYPE_TCP,  &ctx->tcp_spec, &ctx->tcp_mask);
+	if (rule->is_udp)
+		add_flow_pattern(&ctx->patterns, RTE_FLOW_ITEM_TYPE_UDP, &ctx->udp_spec, &ctx->udp_mask);
+	else
+		add_flow_pattern(&ctx->patterns, RTE_FLOW_ITEM_TYPE_TCP, &ctx->tcp_spec, &ctx->tcp_mask);
 	add_flow_pattern(&ctx->patterns, RTE_FLOW_ITEM_TYPE_END, NULL, NULL);
 
 	if (rule->has_mark)
@@ -433,6 +454,8 @@ static void offload_translate(struct offload_rule *rule, struct offload_ctx *ctx
 
 		if (rule->has_rss_types)
 			rss_types = rule->rss_types;
+		else if (rule->is_udp)
+			rss_types = ETH_RSS_IP | ETH_RSS_UDP;
 		else
 			rss_types = ETH_RSS_IP | ETH_RSS_TCP;
 
@@ -688,6 +711,164 @@ fail:
 void port_block_offload_destroy(struct port_block *block)
 {
 	offload_destroy(&block->offload_list);
+}
+
+/*
+ * Create UDP RSS flow rules for the given ports so that incoming
+ * UDP traffic is distributed across all workers by 4-tuple hash.
+ */
+/*
+ * Create UDP RSS flow rules for the given ports so that incoming
+ * UDP traffic is distributed across all workers by 4-tuple hash.
+ * Supports both IPv4 and IPv6 (creates separate rules for each).
+ */
+int udp_offload_init(uint16_t *ports, int nr_port)
+{
+	/* 2 offload lists per port: one for IPv4, one for IPv6 */
+	static struct offload_list udp_offload_lists[128];
+	struct offload_rule rule;
+	struct tpa_ip local_ip;
+	int idx = 0;
+	int i;
+
+	if (unlikely(tpa_cfg.nr_dpdk_port == 0))
+		return 0;
+
+	if (nr_port > 64) {
+		LOG_ERR("too many UDP ports: %d (max 64)", nr_port);
+		return -1;
+	}
+
+	for (i = 0; i < nr_port; i++) {
+		/* IPv4 rule */
+		if (dev.ip4) {
+			offload_list_init(&udp_offload_lists[idx]);
+			offload_set_name(&udp_offload_lists[idx],
+					 "udp4 port %hu", ntohs(ports[i]));
+
+			memset(&rule, 0, sizeof(rule));
+			rule.is_udp = 1;
+			rule.has_rss = 1;
+
+			tpa_ip_set_ipv4(&local_ip, dev.ip4);
+			OFFLOAD_SET(&rule, dst_ip, local_ip);
+			OFFLOAD_SET(&rule, dst_port, ports[i]);
+
+			if (offload_create(&udp_offload_lists[idx], &rule, 1) < 0) {
+				LOG_ERR("failed to create UDP4 offload for port %hu",
+					ntohs(ports[i]));
+				return -1;
+			}
+			idx++;
+		}
+
+		/* IPv6 rule */
+		if (!is_ip6_any(&dev.ip6.ip)) {
+			offload_list_init(&udp_offload_lists[idx]);
+			offload_set_name(&udp_offload_lists[idx],
+					 "udp6 port %hu", ntohs(ports[i]));
+
+			memset(&rule, 0, sizeof(rule));
+			rule.is_udp = 1;
+			rule.has_rss = 1;
+
+			OFFLOAD_SET(&rule, dst_ip, dev.ip6.ip);
+			OFFLOAD_SET(&rule, dst_port, ports[i]);
+
+			if (offload_create(&udp_offload_lists[idx], &rule, 1) < 0) {
+				LOG_ERR("failed to create UDP6 offload for port %hu",
+					ntohs(ports[i]));
+				return -1;
+			}
+			idx++;
+		}
+	}
+
+	return 0;
+}
+
+/*
+ * Offload lists for dedicated UDP queues.  Each call to
+ * udp_offload_init_queue() allocates from the next free slot,
+ * so multiple calls (one per dedicated queue) never overlap.
+ */
+static struct offload_list udp_queue_offload_lists[128];
+static int udp_queue_offload_next;
+
+int udp_offload_init_queue(uint16_t *ports, int nr_port, uint16_t queue)
+{
+	struct offload_rule rule;
+	struct tpa_ip local_ip;
+	int idx;
+	int i;
+
+	if (unlikely(tpa_cfg.nr_dpdk_port == 0))
+		return 0;
+
+	if (nr_port > 64) {
+		LOG_ERR("too many UDP ports: %d (max 64)", nr_port);
+		return -1;
+	}
+
+	/* 2 entries per port (IPv4 + IPv6) in the worst case */
+	if (udp_queue_offload_next + nr_port * 2 >
+	    (int)ARRAY_SIZE(udp_queue_offload_lists)) {
+		LOG_ERR("udp queue offload list exhausted");
+		return -1;
+	}
+
+	for (i = 0; i < nr_port; i++) {
+		if (dev.ip4) {
+			idx = udp_queue_offload_next++;
+
+			offload_list_init(&udp_queue_offload_lists[idx]);
+			offload_set_name(&udp_queue_offload_lists[idx],
+					 "udp4-q%hu port %hu", queue,
+					 ntohs(ports[i]));
+
+			memset(&rule, 0, sizeof(rule));
+			rule.is_udp = 1;
+
+			tpa_ip_set_ipv4(&local_ip, dev.ip4);
+			OFFLOAD_SET(&rule, dst_ip, local_ip);
+			OFFLOAD_SET(&rule, dst_port, ports[i]);
+			OFFLOAD_SET(&rule, queue, queue);
+
+			if (offload_create(&udp_queue_offload_lists[idx],
+					   &rule, 1) < 0) {
+				LOG_ERR("failed to create UDP4 queue offload "
+					"for port %hu queue %hu",
+					ntohs(ports[i]), queue);
+				return -1;
+			}
+		}
+
+		if (!is_ip6_any(&dev.ip6.ip)) {
+			idx = udp_queue_offload_next++;
+
+			offload_list_init(&udp_queue_offload_lists[idx]);
+			offload_set_name(&udp_queue_offload_lists[idx],
+					 "udp6-q%hu port %hu", queue,
+					 ntohs(ports[i]));
+
+			memset(&rule, 0, sizeof(rule));
+			rule.is_udp = 1;
+
+			OFFLOAD_SET(&rule, dst_ip, dev.ip6.ip);
+			OFFLOAD_SET(&rule, dst_port, ports[i]);
+			OFFLOAD_SET(&rule, queue, queue);
+
+			if (offload_create(&udp_queue_offload_lists[idx],
+					   &rule, 1) < 0) {
+				LOG_ERR("failed to create UDP6 queue offload "
+					"for port %hu queue %hu",
+					ntohs(ports[i]), queue);
+				return -1;
+			}
+		}
+	}
+
+	return 0;
 }
 
 int offload_init(void)

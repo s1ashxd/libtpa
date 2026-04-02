@@ -147,6 +147,19 @@ static inline const char *tpa_ip_to_str(const struct tpa_ip *ip, char *buf, size
 
 int tpa_init(int nr_worker);
 
+/*
+ * Extended initialization with dedicated UDP-only queues.
+ *
+ * Dedicated queues are independent of libtpa workers. They own their
+ * own DPDK RX/TX queue pair and are polled via tpa_udp_queue_recv().
+ * DPDK configures (nr_worker + nr_udp_queue) queues per port;
+ * workers occupy indices [0, nr_worker), dedicated queues occupy
+ * [nr_worker, nr_worker + nr_udp_queue).
+ *
+ * tpa_init(n) is equivalent to tpa_init_with_udp_queues(n, 0).
+ */
+int tpa_init_with_udp_queues(int nr_worker, int nr_udp_queue);
+
 struct tpa_worker;
 struct tpa_worker *tpa_worker_init(void);
 void tpa_worker_run(struct tpa_worker *worker);
@@ -163,6 +176,96 @@ ssize_t tpa_write(int sid, const void *buf, size_t count);
 
 int tpa_event_ctrl(int sid, int op, struct tpa_event *event);
 int tpa_event_poll(struct tpa_worker *worker, struct tpa_event *events, int max);
+
+/*
+ * UDP transport API for external QUIC stacks.
+ *
+ * Usage from Rust/C:
+ *   tpa_init(nr_workers);
+ *   tpa_udp_init(ports, nr_port);  // create flow rules for these UDP ports
+ *
+ *   // per thread:
+ *   struct tpa_worker *w = tpa_worker_init();
+ *   loop {
+ *       tpa_worker_run(w);
+ *       tpa_udp_recv_batch(w, rx_pkts, max);
+ *       tpa_udp_send_batch(w, tx_pkts, count);
+ *   }
+ */
+struct tpa_udp_pkt {
+	void *buf;
+	uint16_t len;
+	struct tpa_ip remote_ip;
+	uint16_t remote_port;	/* network byte order */
+	uint16_t local_port;	/* network byte order */
+};
+
+/*
+ * Create RSS flow rules for the given UDP ports so that incoming
+ * UDP traffic is distributed across all workers. Call after tpa_init.
+ */
+int tpa_udp_init(uint16_t *listen_ports, int nr_port);
+
+/*
+ * Send a batch of UDP packets. Returns number of packets successfully
+ * enqueued for transmission. Flushes the TX queue before returning.
+ */
+int tpa_udp_send_batch(struct tpa_worker *worker,
+		       const struct tpa_udp_pkt *pkts, int count);
+
+/*
+ * Receive a batch of UDP packets. Copies payload into caller-provided
+ * buffers (pkt->buf must point to allocated memory, pkt->len must be
+ * set to buffer capacity). Returns number of packets received.
+ * On return, pkt->len is set to actual payload length, pkt->remote_ip/
+ * remote_port/local_port are filled.
+ */
+int tpa_udp_recv_batch(struct tpa_worker *worker,
+		       struct tpa_udp_pkt *pkts, int max_count);
+
+/*
+ * Zero-copy UDP receive packet.
+ *
+ * The payload pointer references the DPDK mbuf DMA buffer directly.
+ * Valid until tpa_udp_pkt_zc_free() is called. Caller MUST NOT
+ * modify the payload or retain the pointer beyond that point.
+ */
+struct tpa_udp_pkt_zc {
+	const void *payload;
+	uint16_t    len;
+	struct tpa_ip remote_ip;
+	uint16_t    remote_port;	/* network byte order */
+	uint16_t    local_port;		/* network byte order */
+	void       *_opaque;		/* internal: do not touch */
+};
+
+/*
+ * Create flow rules directing UDP traffic on @ports to dedicated
+ * queue @queue_idx. Indices are 0-based within the dedicated range
+ * (DPDK queue id = nr_worker + queue_idx). Ports in network byte order.
+ * Call after tpa_init_with_udp_queues.
+ */
+int tpa_udp_queue_init(int queue_idx, uint16_t *ports, int nr_port);
+
+/*
+ * Poll dedicated queue @queue_idx for UDP packets (zero-copy).
+ *
+ * Returns the number of packets received (>= 0) on success,
+ * or -1 if @queue_idx is out of range.
+ *
+ * Each returned packet holds a reference to a DPDK mbuf; call
+ * tpa_udp_pkt_zc_free() promptly to avoid mempool exhaustion.
+ *
+ * Thread safety: a given queue_idx MUST be polled from one thread.
+ * Distinct indices may be polled concurrently.
+ */
+int tpa_udp_queue_recv(int queue_idx,
+		       struct tpa_udp_pkt_zc *pkts, int max_count);
+
+/*
+ * Return mbufs obtained from tpa_udp_queue_recv() to the pool.
+ */
+void tpa_udp_pkt_zc_free(struct tpa_udp_pkt_zc *pkts, int count);
 
 struct tpa_memseg {
 	void    *virt_addr;

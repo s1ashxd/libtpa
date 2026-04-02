@@ -16,6 +16,7 @@
 #include "dev.h"
 #include "port_alloc.h"
 #include "tx_desc.h"
+#include "udp.h"
 
 struct cycles {
 	uint64_t start;
@@ -63,10 +64,24 @@ struct tpa_worker {
 	struct port_block *port_blocks[MAX_PORT_BLOCK_PER_WORKER];
 	struct sock_table sock_table;
 
+	struct udp_rxq udp_rxq;
+
 	uint64_t stats_base[STATS_MAX];
 
 	pid_t tid;
 } __rte_cache_aligned;
+
+static inline void udp_rx_enqueue(struct tpa_worker *worker, struct packet *pkt)
+{
+	struct udp_rxq *rxq = &worker->udp_rxq;
+
+	if (likely(rxq->count < UDP_RXQ_SIZE)) {
+		rxq->pkts[rxq->count++] = pkt;
+	} else {
+		WORKER_STATS_INC(worker, ERR_UDP_RXQ_FULL);
+		packet_free(pkt);
+	}
+}
 
 static inline void tsock_update_last_ts(struct tcp_sock *tsock, int type)
 {

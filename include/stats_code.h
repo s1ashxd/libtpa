@@ -126,6 +126,15 @@ STATS(WARN_INVLIAD_SYN_RCVD, "likely we rcved a dup syn")
 
 STATS(PKT_RECV_MERGE, "number of incomping pkts merged")
 
+STATS(UDP_PKT_RECV,   "UDP packets received")
+STATS(UDP_BYTE_RECV,  "UDP bytes received")
+STATS(UDP_PKT_XMIT,   "UDP packets transmitted")
+STATS(UDP_BYTE_XMIT,  "UDP bytes transmitted")
+STATS(ERR_UDP_ALLOC_FAIL, "failed to allocate UDP packet mbuf")
+STATS(ERR_UDP_SEND_FAIL, "failed to enqueue UDP packet for TX")
+STATS(ERR_UDP_RXQ_FULL, "UDP RX queue is full")
+STATS(UDP_OFFLOAD_FAILURE, "failed to offload UDP flow rule")
+
 STATS(TCP_KEEPALIVE_PROBE, "number of tcp keepalive probes")
 STATS(TCP_KEEPALIVE_TIME_OUT, "tcp keepalive probe times out")
 

@@ -203,17 +203,23 @@ static int early_init(void)
 
 int tpa_init(int nr_worker)
 {
+	return tpa_init_with_udp_queues(nr_worker, 0);
+}
+
+int tpa_init_with_udp_queues(int nr_worker, int nr_udp_queue)
+{
 	RTE_BUILD_BUG_ON(sizeof(struct packet) != 64 * 4);
 	RTE_BUILD_BUG_ON(sizeof(struct tpa_sock_opts) != 128);
 
 	gettimeofday(&startup_time, NULL);
-	LOG("Libtpa version: %s; nr_worker=%d; id=%s", TPA_VERSION, nr_worker, tpa_id_get());
+	LOG("Libtpa version: %s; nr_worker=%d; nr_udp_queue=%d; id=%s",
+	    TPA_VERSION, nr_worker, nr_udp_queue, tpa_id_get());
 	LOG("build info: %s <%s @%s> %s", BUILD_MODE, BUILD_COMPILER, BUILD_BOX, BUILD_DATE);
 
 	if (tpa_lock() == -1)
 		return -1;
 
-	if (nr_worker <= 0)
+	if (nr_worker <= 0 || nr_udp_queue < 0)
 		return -1;
 
 	cfg_init();
@@ -229,7 +235,13 @@ int tpa_init(int nr_worker)
 
 	shell_init();
 
-	dpdk_init(nr_worker);
+	/*
+	 * Store nr_udp_queue before dpdk_init so that subsequent
+	 * dev_port_init() can size rxq/txq arrays for all queues.
+	 */
+	tpa_cfg.nr_udp_queue = nr_udp_queue;
+
+	dpdk_init(nr_worker + nr_udp_queue);
 	if (worker_init(nr_worker) < 0)
 		return -1;
 

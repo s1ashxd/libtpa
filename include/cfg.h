@@ -69,6 +69,7 @@ struct tpa_cfg {
 	uint32_t nr_worker_shift;
 	uint32_t nr_worker_mask;
 	uint32_t preferred_numa;
+	uint32_t nr_udp_queue;
 
 	int nr_dpdk_port;
 

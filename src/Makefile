@@ -42,6 +42,7 @@ SRCS += tpad.c
 SRCS += neigh.c
 SRCS += arp.c
 SRCS += ndp.c
+SRCS += udp.c
 
 VPATH += ./tcp
 SRCS += tcp_input.c

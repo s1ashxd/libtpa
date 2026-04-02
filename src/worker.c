@@ -55,6 +55,7 @@ static int init_one_worker(struct tpa_worker *worker, uint8_t id)
 	timer_ctrl_init(&worker->timer_ctrl, worker->ts_us);
 
 	sock_table_init(&worker->sock_table);
+	udp_rxq_init(&worker->udp_rxq);
 
 	if (packet_pool_create(&worker->zwrite_pkt_pool, 25.0 / tpa_cfg.nr_worker,
 			       0, "zwrite-mbuf-mp-%d", worker->id) < 0)
@@ -192,6 +193,9 @@ void tpa_worker_run(struct tpa_worker *worker)
 	busy += timer_process(&worker->timer_ctrl, worker->ts_us);
 	busy += tcp_input_process(worker);
 	busy += tcp_output_process(worker);
+
+	/* UDP packets buffered during tcp_input (parse_tcp_packet → ERR_PKT_NOT_TCP) */
+	busy += udp_input(worker);
 
 	drop_ooo_mbufs(worker);
 

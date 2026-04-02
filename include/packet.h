@@ -9,6 +9,7 @@
 #include <sys/queue.h>
 
 #include <rte_mbuf.h>
+#include <rte_udp.h>
 
 #include "lib/utils.h"
 #include "tcp.h"
@@ -147,6 +148,16 @@ static inline int ip_is_frag(uint32_t frag_off)
 static inline struct rte_tcp_hdr *packet_tcp_hdr(struct packet *pkt)
 {
 	return (struct rte_tcp_hdr *)(packet_data(pkt) + pkt->l4_off);
+}
+
+static inline struct rte_udp_hdr *packet_udp_hdr(struct packet *pkt)
+{
+	return (struct rte_udp_hdr *)(packet_data(pkt) + pkt->l4_off);
+}
+
+static inline void *udp_payload_addr(struct packet *pkt)
+{
+	return packet_data(pkt) + pkt->l5_off;
 }
 
 static inline void *tcp_payload_addr(struct packet *pkt)
@@ -388,6 +399,54 @@ static inline int parse_tcp_packet(struct packet *pkt)
 	TCP_SEG(pkt)->opt_len = tcp_hdr_len - sizeof(struct rte_tcp_hdr);
 
 	pkt->l5_len = TCP_SEG(pkt)->len;
+	pkt->tail = pkt;
+	pkt->nr_read_seg = 1;
+
+	return 0;
+}
+
+static inline int parse_udp_packet(struct packet *pkt)
+{
+	struct rte_mbuf *m = &pkt->mbuf;
+	struct rte_udp_hdr *uh;
+
+	pkt->l2_off = pkt->mbuf.data_off;
+	pkt->l3_off = pkt->l2_off + sizeof(struct rte_ether_hdr);
+
+	if (m->packet_type & RTE_PTYPE_L3_IPV4) {
+		struct rte_ipv4_hdr *ip = packet_ip_hdr(pkt);
+
+		if (ip->next_proto_id != IPPROTO_UDP)
+			return -1;
+		if (unlikely(ip_is_frag(ip->fragment_offset)))
+			return -1;
+
+		pkt->l4_off = pkt->l3_off + IP4_HDR_LEN(ip);
+	} else if (m->packet_type & RTE_PTYPE_L3_IPV6) {
+		struct rte_ipv6_hdr *ip = packet_ip6_hdr(pkt);
+
+		if (ip->proto != IPPROTO_UDP)
+			return -1;
+
+		pkt->l4_off = pkt->l3_off + sizeof(struct rte_ipv6_hdr);
+		pkt->flags |= PKT_FLAG_IS_IPV6;
+	} else {
+		return -1;
+	}
+
+	uh = packet_udp_hdr(pkt);
+	if (unlikely(ntohs(uh->dgram_len) < sizeof(struct rte_udp_hdr)))
+		return -1;
+
+	pkt->l5_off = pkt->l4_off + sizeof(struct rte_udp_hdr);
+	pkt->l5_len = ntohs(uh->dgram_len) - sizeof(struct rte_udp_hdr);
+	pkt->hdr_len = pkt->l5_off - pkt->l2_off;
+
+	if (unlikely(m->pkt_len < pkt->hdr_len))
+		return -1;
+
+	pkt->src_port = uh->src_port;
+	pkt->dst_port = uh->dst_port;
 	pkt->tail = pkt;
 	pkt->nr_read_seg = 1;
 

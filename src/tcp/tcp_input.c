@@ -1746,7 +1746,11 @@ uint32_t tcp_input(struct tpa_worker *worker, uint16_t port_id)
 
 		err = parse_tcp_packet(pkt);
 		if (unlikely(err)) {
-			free_err_pkt(worker, NULL, pkt, err);
+			if (err == -ERR_PKT_NOT_TCP && parse_udp_packet(pkt) == 0) {
+				udp_rx_enqueue(worker, pkt);
+			} else {
+				free_err_pkt(worker, NULL, pkt, err);
+			}
 			continue;
 		}
 
