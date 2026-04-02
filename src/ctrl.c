@@ -49,7 +49,8 @@ static void timeout_event_done(int fd)
 {
 	uint64_t expirations;
 
-	read(fd, &expirations, sizeof(expirations));
+	if (read(fd, &expirations, sizeof(expirations)) < 0)
+		; /* timer fd read failure is non-fatal */
 }
 
 static int epfd = -1;
