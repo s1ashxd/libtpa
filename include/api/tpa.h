@@ -237,7 +237,7 @@ struct tpa_udp_pkt_zc {
 	uint16_t    remote_port;	/* network byte order */
 	uint16_t    local_port;		/* network byte order */
 	void       *_opaque;		/* internal: do not touch */
-	uint64_t    recv_ns;		/* CLOCK_MONOTONIC ns, stamped at rte_eth_rx_burst */
+	uint64_t    recv_tsc;		/* TSC (rdtsc) at rte_eth_rx_burst return */
 };
 
 /*
@@ -280,7 +280,7 @@ struct tpa_raw_pkt {
 	const void *data;		/* rte_pktmbuf_mtod — Ethernet frame start */
 	uint16_t    data_len;		/* rte_mbuf.data_len (total frame bytes) */
 	void       *_opaque;		/* rte_mbuf* — do not touch */
-	uint64_t    recv_ns;		/* CLOCK_MONOTONIC ns at rte_eth_rx_burst */
+	uint64_t    recv_tsc;		/* TSC (rdtsc) at rte_eth_rx_burst return */
 };
 
 int tpa_udp_queue_recv_raw(int queue_idx,

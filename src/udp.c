@@ -278,10 +278,7 @@ int tpa_udp_queue_recv(int queue_idx,
 		if (unlikely(nb_rx == 0))
 			continue;
 
-		struct timespec _ts;
-		clock_gettime(CLOCK_MONOTONIC, &_ts);
-		uint64_t batch_ns = (uint64_t)_ts.tv_sec * 1000000000ULL
-				   + (uint64_t)_ts.tv_nsec;
+		uint64_t batch_tsc = rte_rdtsc();
 
 		for (i = 0; i < nb_rx; i++) {
 			struct packet *pkt = rx_pkts[i];
@@ -300,7 +297,7 @@ int tpa_udp_queue_recv(int queue_idx,
 			pkts[count].remote_port = pkt->src_port;
 			pkts[count].local_port  = pkt->dst_port;
 			pkts[count]._opaque     = pkt;
-			pkts[count].recv_ns     = batch_ns;
+			pkts[count].recv_tsc     = batch_tsc;
 			count++;
 		}
 	}
@@ -343,10 +340,7 @@ int tpa_udp_queue_recv_raw(int queue_idx,
 		if (unlikely(nb_rx == 0))
 			continue;
 
-		struct timespec _ts;
-		clock_gettime(CLOCK_MONOTONIC, &_ts);
-		uint64_t batch_ns = (uint64_t)_ts.tv_sec * 1000000000ULL
-				   + (uint64_t)_ts.tv_nsec;
+		uint64_t batch_tsc = rte_rdtsc();
 
 		for (i = 0; i < nb_rx; i++) {
 			struct rte_mbuf *m = rx_mbufs[i];
@@ -356,7 +350,7 @@ int tpa_udp_queue_recv_raw(int queue_idx,
 			pkts[count].data     = rte_pktmbuf_mtod(m, const void *);
 			pkts[count].data_len = m->data_len;
 			pkts[count]._opaque  = m;
-			pkts[count].recv_ns  = batch_ns;
+			pkts[count].recv_tsc  = batch_tsc;
 			count++;
 		}
 	}
