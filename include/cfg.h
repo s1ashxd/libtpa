@@ -60,8 +60,8 @@ struct cfg_section {
 
 #define CFG_SPECS_SIZE		1024
 
-#define NR_RX_DESC	4096
-#define NR_TX_DESC	4096
+#define NR_RX_DESC	2048
+#define NR_TX_DESC	2048
 
 struct tpa_cfg {
 	uint64_t hz;

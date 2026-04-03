@@ -373,7 +373,11 @@ static void mbuf_mempool_init(void)
 	generic_pkt_pool = rte_malloc(NULL, sizeof(struct packet_pool), 64);
 	mbuf_size = RTE_MAX(RTE_MBUF_DEFAULT_DATAROOM,
 			    max_rx_pkt_len + sizeof(struct rte_mbuf));
-	ret = packet_pool_create(generic_pkt_pool, 62.5, mbuf_size + RTE_PKTMBUF_HEADROOM, "mbuf-mempool");
+	double pool_pct = 62.5;
+	const char *env = getenv("TPA_MEMPOOL_PCT");
+	if (env)
+		pool_pct = atof(env);
+	ret = packet_pool_create(generic_pkt_pool, pool_pct, mbuf_size + RTE_PKTMBUF_HEADROOM, "mbuf-mempool");
 
 	PANIC_ON(ret == -1, "failed to allocate generic mempool");
 }

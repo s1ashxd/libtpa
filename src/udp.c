@@ -275,6 +275,13 @@ int tpa_udp_queue_recv(int queue_idx,
 		nb_rx = rte_eth_rx_burst(port, dpdk_queue,
 					 (struct rte_mbuf **)rx_pkts,
 					 max_count - count);
+		if (unlikely(nb_rx == 0))
+			continue;
+
+		struct timespec _ts;
+		clock_gettime(CLOCK_MONOTONIC, &_ts);
+		uint64_t batch_ns = (uint64_t)_ts.tv_sec * 1000000000ULL
+				   + (uint64_t)_ts.tv_nsec;
 
 		for (i = 0; i < nb_rx; i++) {
 			struct packet *pkt = rx_pkts[i];
@@ -293,6 +300,7 @@ int tpa_udp_queue_recv(int queue_idx,
 			pkts[count].remote_port = pkt->src_port;
 			pkts[count].local_port  = pkt->dst_port;
 			pkts[count]._opaque     = pkt;
+			pkts[count].recv_ns     = batch_ns;
 			count++;
 		}
 	}
@@ -310,4 +318,66 @@ void tpa_udp_pkt_zc_free(struct tpa_udp_pkt_zc *pkts, int count)
 			pkts[i]._opaque = NULL;
 		}
 	}
+}
+
+int tpa_udp_queue_recv_raw(int queue_idx,
+			    struct tpa_raw_pkt *pkts, int max_count)
+{
+	uint16_t dpdk_queue;
+	struct rte_mbuf *rx_mbufs[BATCH_SIZE];
+	uint16_t port;
+	uint16_t nb_rx;
+	int count = 0;
+	uint16_t i;
+
+	if (unlikely(queue_idx < 0 ||
+		     (uint32_t)queue_idx >= tpa_cfg.nr_udp_queue))
+		return -1;
+
+	dpdk_queue = tpa_cfg.nr_worker + queue_idx;
+	max_count = RTE_MIN(max_count, BATCH_SIZE);
+
+	for (port = 0; port < dev.nr_port && count < max_count; port++) {
+		nb_rx = rte_eth_rx_burst(port, dpdk_queue,
+					 rx_mbufs, max_count - count);
+		if (unlikely(nb_rx == 0))
+			continue;
+
+		struct timespec _ts;
+		clock_gettime(CLOCK_MONOTONIC, &_ts);
+		uint64_t batch_ns = (uint64_t)_ts.tv_sec * 1000000000ULL
+				   + (uint64_t)_ts.tv_nsec;
+
+		for (i = 0; i < nb_rx; i++) {
+			struct rte_mbuf *m = rx_mbufs[i];
+			if (i + 1 < nb_rx)
+				rte_prefetch0(rte_pktmbuf_mtod(rx_mbufs[i + 1],
+							       void *));
+			pkts[count].data     = rte_pktmbuf_mtod(m, const void *);
+			pkts[count].data_len = m->data_len;
+			pkts[count]._opaque  = m;
+			pkts[count].recv_ns  = batch_ns;
+			count++;
+		}
+	}
+
+	return count;
+}
+
+void tpa_raw_pkt_free(struct tpa_raw_pkt *pkts, int count)
+{
+	int i;
+
+	for (i = 0; i < count; i++) {
+		if (pkts[i]._opaque) {
+			rte_pktmbuf_free((struct rte_mbuf *)pkts[i]._opaque);
+			pkts[i]._opaque = NULL;
+		}
+	}
+}
+
+void tpa_raw_pkt_free_one(void *opaque)
+{
+	if (opaque)
+		rte_pktmbuf_free((struct rte_mbuf *)opaque);
 }

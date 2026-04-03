@@ -237,6 +237,7 @@ struct tpa_udp_pkt_zc {
 	uint16_t    remote_port;	/* network byte order */
 	uint16_t    local_port;		/* network byte order */
 	void       *_opaque;		/* internal: do not touch */
+	uint64_t    recv_ns;		/* CLOCK_MONOTONIC ns, stamped at rte_eth_rx_burst */
 };
 
 /*
@@ -266,6 +267,30 @@ int tpa_udp_queue_recv(int queue_idx,
  * Return mbufs obtained from tpa_udp_queue_recv() to the pool.
  */
 void tpa_udp_pkt_zc_free(struct tpa_udp_pkt_zc *pkts, int count);
+
+/*
+ * Raw zero-copy UDP receive — no header parsing, no packet_init.
+ *
+ * Returns the Ethernet frame start pointer and total length.
+ * Caller is responsible for L2/L3/L4 header parsing.
+ * Each packet holds an mbuf reference; free via tpa_raw_pkt_free()
+ * or tpa_raw_pkt_free_one() for deferred (per-packet) release.
+ */
+struct tpa_raw_pkt {
+	const void *data;		/* rte_pktmbuf_mtod — Ethernet frame start */
+	uint16_t    data_len;		/* rte_mbuf.data_len (total frame bytes) */
+	void       *_opaque;		/* rte_mbuf* — do not touch */
+	uint64_t    recv_ns;		/* CLOCK_MONOTONIC ns at rte_eth_rx_burst */
+};
+
+int tpa_udp_queue_recv_raw(int queue_idx,
+			    struct tpa_raw_pkt *pkts, int max_count);
+
+/* Batch-free mbufs from tpa_udp_queue_recv_raw(). */
+void tpa_raw_pkt_free(struct tpa_raw_pkt *pkts, int count);
+
+/* Free a single mbuf by opaque handle (for deferred FEC release). */
+void tpa_raw_pkt_free_one(void *opaque);
 
 struct tpa_memseg {
 	void    *virt_addr;
