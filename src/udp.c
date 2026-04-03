@@ -235,6 +235,11 @@ int tpa_udp_init(uint16_t *listen_ports, int nr_port)
 	return udp_offload_init(listen_ports, nr_port);
 }
 
+int tpa_udp_init_per_worker(uint16_t *ports, int nr_port, uint16_t worker_queue)
+{
+	return udp_offload_init_queue(ports, nr_port, worker_queue);
+}
+
 /* ------------------------------------------------------------------ */
 /*  Dedicated UDP queue: zero-copy receive path                       */
 /* ------------------------------------------------------------------ */

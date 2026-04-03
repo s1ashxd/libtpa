@@ -207,11 +207,28 @@ static void dpdk_port_init(uint16_t port, int nr_queue)
 
 	rte_eth_dev_info_get(port, &dev_info);
 
+	/* Flow isolation must be enabled BEFORE rte_eth_dev_configure() for mlx5
+	 * bifurcated mode. This disables all default kernel steering rules and
+	 * gives rte_flow rules full control over packet routing to queues. */
+	rte_flow_isolate(port, 1, NULL);
+
 	memset(&port_conf, 0, sizeof(port_conf));
 	dpdk_enable_jumbo_frame(&port_conf, max_rx_pkt_len);
 	port_conf.rxmode.offloads = RX_OFFLOAD & dev_info.rx_offload_capa;
 	port_conf.txmode.offloads = TX_OFFLOAD & dev_info.tx_offload_capa;
 	port_conf.lpbk_mode = 1;
+
+	/* Enable RSS multi-queue mode when using more than one RX queue.
+	 * Required by mlx5 bifurcated mode for rte_flow queue steering
+	 * to work on queues > 0. Without this, the NIC hardware steering
+	 * pipeline is not fully initialized and defaults to queue 0. */
+	if (nr_queue > 1) {
+		port_conf.rxmode.mq_mode = ETH_MQ_RX_RSS;
+		port_conf.rx_adv_conf.rss_conf.rss_key = NULL;
+		port_conf.rx_adv_conf.rss_conf.rss_hf =
+			(ETH_RSS_IP | ETH_RSS_TCP | ETH_RSS_UDP)
+			& dev_info.flow_type_rss_offloads;
+	}
 
 	LOG("init port %hu: nr_queue=%hu rx_offload=%lu tx_offload=%lu",
 	    port, nr_queue, port_conf.rxmode.offloads, port_conf.txmode.offloads);
@@ -245,8 +262,6 @@ static void dpdk_port_init(uint16_t port, int nr_queue)
 		if (ret < 0)
 			rte_panic("failed to setup tx queue %u: %d", i, ret);
 	}
-
-	rte_flow_isolate(port, 1, NULL);
 
 	if (rte_eth_dev_start(port) < 0)
 		rte_panic("failed to start dpdk port %hu", port);

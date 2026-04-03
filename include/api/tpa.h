@@ -207,6 +207,13 @@ struct tpa_udp_pkt {
 int tpa_udp_init(uint16_t *listen_ports, int nr_port);
 
 /*
+ * Create UDP flow rules steering specific ports to a specific worker queue.
+ * Unlike tpa_udp_init (RSS across all workers), this pins each port to one queue.
+ * Use for QUIC connections where each provider thread owns its own UDP port.
+ */
+int tpa_udp_init_per_worker(uint16_t *ports, int nr_port, uint16_t worker_queue);
+
+/*
  * Send a batch of UDP packets. Returns number of packets successfully
  * enqueued for transmission. Flushes the TX queue before returning.
  */
