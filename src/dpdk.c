@@ -44,12 +44,14 @@ struct dpdk_cfg {
 	uint32_t mbuf_mem_size;
 	uint32_t mbuf_cache_size;
 	uint32_t huge_unlink;
+	double mempool_pct;
 };
 
 static struct dpdk_cfg dpdk_cfg = {
 	.mbuf_cache_size = 512,
 	.numa = -1,
 	.huge_unlink = 1,
+	.mempool_pct = 62.5,
 };
 
 struct packet_pool *generic_pkt_pool;
@@ -388,11 +390,7 @@ static void mbuf_mempool_init(void)
 	generic_pkt_pool = rte_malloc(NULL, sizeof(struct packet_pool), 64);
 	mbuf_size = RTE_MAX(RTE_MBUF_DEFAULT_DATAROOM,
 			    max_rx_pkt_len + sizeof(struct rte_mbuf));
-	double pool_pct = 62.5;
-	const char *env = getenv("TPA_MEMPOOL_PCT");
-	if (env)
-		pool_pct = atof(env);
-	ret = packet_pool_create(generic_pkt_pool, pool_pct, mbuf_size + RTE_PKTMBUF_HEADROOM, "mbuf-mempool");
+	ret = packet_pool_create(generic_pkt_pool, dpdk_cfg.mempool_pct, mbuf_size + RTE_PKTMBUF_HEADROOM, "mbuf-mempool");
 
 	PANIC_ON(ret == -1, "failed to allocate generic mempool");
 }
@@ -436,6 +434,25 @@ static int dpdk_socket_mem_get(struct cfg_spec *spec, char *val)
 	return 0;
 }
 
+static int dpdk_mempool_pct_set(struct cfg_spec *spec, const char *val)
+{
+	double pct = atof(val);
+
+	if (pct <= 0.0 || pct > 90.0) {
+		LOG_WARN("invalid mempool_pct: %s (must be 0..90)", val);
+		return -1;
+	}
+
+	dpdk_cfg.mempool_pct = pct;
+	return 0;
+}
+
+static int dpdk_mempool_pct_get(struct cfg_spec *spec, char *val)
+{
+	snprintf(val, VAL_SIZE, "%.1f", dpdk_cfg.mempool_pct);
+	return 0;
+}
+
 static struct cfg_spec dpdk_cfg_specs[] = {
 	{
 		.name	  = "dpdk.socket-mem",
@@ -473,6 +490,12 @@ static struct cfg_spec dpdk_cfg_specs[] = {
 		.name	  = "dpdk.huge-unlink",
 		.type     = CFG_TYPE_UINT,
 		.data     = &dpdk_cfg.huge_unlink,
+		.flags	  = CFG_FLAG_RDONLY,
+	}, {
+		.name	  = "dpdk.mempool_pct",
+		.type     = CFG_TYPE_STR,
+		.set      = dpdk_mempool_pct_set,
+		.get      = dpdk_mempool_pct_get,
 		.flags	  = CFG_FLAG_RDONLY,
 	},
 };
